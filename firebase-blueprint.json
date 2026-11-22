@@ -1,0 +1,317 @@
+{
+  "entities": {
+    "Organization": {
+      "title": "Organization",
+      "description": "User workspace organization and BYO Slack App webhook configuration.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Authenticated Firebase UID of the workspace owner."
+        },
+        "orgName": {
+          "type": "string",
+          "description": "Workspace or company display name."
+        },
+        "operatorRole": {
+          "type": "string",
+          "enum": ["SUPPORT", "FINANCE_LEAD", "ADMIN"],
+          "description": "Default operator role for role-gated actions."
+        },
+        "webhookUrl": {
+          "type": "string",
+          "description": "Generated EdgeOps Slack Events webhook URL for this workspace."
+        },
+        "slackBotToken": {
+          "type": "string",
+          "description": "Optional BYO Slack Bot OAuth token."
+        },
+        "slackSigningSecret": {
+          "type": "string",
+          "description": "Optional BYO Slack Signing Secret."
+        },
+        "slackConnected": {
+          "type": "boolean",
+          "description": "Whether the user completed BYO Slack app credentials."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation timestamp written via FieldValue.serverTimestamp()."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Update timestamp written via FieldValue.serverTimestamp()."
+        }
+      },
+      "required": [
+        "userId",
+        "orgName",
+        "operatorRole",
+        "webhookUrl",
+        "slackConnected",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "Incident": {
+      "title": "Incident",
+      "description": "An operational alert or customer support ticket triaged locally via on-device Gemini Nano and optionally investigated in the cloud.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Authenticated Firebase UID of the owner."
+        },
+        "title": {
+          "type": "string",
+          "description": "Short headline describing the alert or ticket."
+        },
+        "channel": {
+          "type": "string",
+          "description": "Source Slack or alert channel tag (e.g. #ops-alerts)."
+        },
+        "industryPack": {
+          "type": "string",
+          "enum": ["ECOMMERCE", "B2B_SAAS", "LOGISTICS"],
+          "description": "Industry pack context associated with this incident."
+        },
+        "severity": {
+          "type": "string",
+          "enum": ["HIGH", "MEDIUM", "LOW", "NOISE"],
+          "description": "Assessed severity level."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["NEEDS_ACTION", "HIDDEN_NOISE", "INVESTIGATED", "RESOLVED"],
+          "description": "Current workflow state; RESOLVED is terminal."
+        },
+        "noiseSuppressed": {
+          "type": "boolean",
+          "description": "True when local triage classified the alert as suppressed noise."
+        },
+        "rawMessage": {
+          "type": "string",
+          "description": "Original unredacted alert text kept owner-private for local Privacy Shield diff."
+        },
+        "scrubbedMessage": {
+          "type": "string",
+          "description": "Locally redacted text with PII replaced by protected placeholders."
+        },
+        "redactionCount": {
+          "type": "integer",
+          "description": "Number of PII entities locally redacted before cloud calls."
+        },
+        "triageSummary": {
+          "type": "string",
+          "description": "Short local triage summary."
+        },
+        "suggestedReply": {
+          "type": "string",
+          "description": "Offline-ready or cloud-refined draft reply."
+        },
+        "inferenceSource": {
+          "type": "string",
+          "enum": ["ON_DEVICE_NANO", "CLOUD_FALLBACK", "LOCAL_OFFLINE_GUARD", "CLOUD_INVESTIGATION"],
+          "description": "Model execution source for the latest analysis."
+        },
+        "diagnosis": {
+          "type": "string",
+          "description": "Plain-English What Happened diagnosis from Cloud Investigation."
+        },
+        "toolsUsed": {
+          "type": "array",
+          "description": "List of tool names retrieved and executed during Cloud Investigation."
+        },
+        "totalToolsAvailable": {
+          "type": "integer",
+          "description": "Total number of pluggable tools available in the registry during retrieval."
+        },
+        "investigatedRole": {
+          "type": "string",
+          "enum": ["SUPPORT", "FINANCE_LEAD", "ADMIN"],
+          "description": "Role under which Cloud Investigation was executed."
+        },
+        "approvedReply": {
+          "type": "string",
+          "description": "Final approved reply dispatched to Slack."
+        },
+        "approvedByRole": {
+          "type": "string",
+          "enum": ["SUPPORT", "FINANCE_LEAD", "ADMIN"],
+          "description": "Role that approved the resolution."
+        },
+        "slackPosted": {
+          "type": "boolean",
+          "description": "Whether the reply was posted to a configured BYO Slack webhook."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation timestamp written via FieldValue.serverTimestamp()."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last modification timestamp written via FieldValue.serverTimestamp()."
+        }
+      },
+      "required": [
+        "userId",
+        "title",
+        "channel",
+        "industryPack",
+        "severity",
+        "status",
+        "noiseSuppressed",
+        "rawMessage",
+        "scrubbedMessage",
+        "redactionCount",
+        "triageSummary",
+        "suggestedReply",
+        "inferenceSource",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "Connector": {
+      "title": "Connector",
+      "description": "A user-registered vendor-agnostic MCP Server URL or imported OpenAPI JSON spec.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Authenticated Firebase UID of the owner."
+        },
+        "name": {
+          "type": "string",
+          "description": "Display name of the connector."
+        },
+        "connectorType": {
+          "type": "string",
+          "enum": ["MCP_SERVER", "OPENAPI_SPEC"],
+          "description": "Connector protocol type."
+        },
+        "endpointUrl": {
+          "type": "string",
+          "description": "Base URL or MCP server endpoint."
+        },
+        "toolNames": {
+          "type": "array",
+          "description": "Discovered or declared tool identifiers."
+        },
+        "toolCount": {
+          "type": "integer",
+          "description": "Count of tools exposed by this connector."
+        },
+        "enabled": {
+          "type": "boolean",
+          "description": "Whether this connector is active for dynamic tool retrieval."
+        },
+        "statusLabel": {
+          "type": "string",
+          "description": "Connection status description."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation timestamp written via FieldValue.serverTimestamp()."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Update timestamp written via FieldValue.serverTimestamp()."
+        }
+      },
+      "required": [
+        "userId",
+        "name",
+        "connectorType",
+        "endpointUrl",
+        "toolNames",
+        "toolCount",
+        "enabled",
+        "statusLabel",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "UserSettings": {
+      "title": "UserSettings",
+      "description": "Per-user workspace settings including linked org, onboarding status, active pack, role, and BYO Slack webhook.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Authenticated Firebase UID matching the document ID."
+        },
+        "orgId": {
+          "type": "string",
+          "description": "Linked organization document ID in /orgs/{orgId}."
+        },
+        "orgName": {
+          "type": "string",
+          "description": "Display name of the linked workspace."
+        },
+        "onboardingCompleted": {
+          "type": "boolean",
+          "description": "Whether first-run onboarding has been completed or skipped."
+        },
+        "activePack": {
+          "type": "string",
+          "enum": ["ECOMMERCE", "B2B_SAAS", "LOGISTICS"],
+          "description": "Active 1-click sample industry pack."
+        },
+        "activeRole": {
+          "type": "string",
+          "enum": ["SUPPORT", "FINANCE_LEAD", "ADMIN"],
+          "description": "Selected operational role for role-gated actions."
+        },
+        "slackWebhookUrl": {
+          "type": "string",
+          "description": "Optional BYO Slack App incoming webhook URL."
+        },
+        "slackChannel": {
+          "type": "string",
+          "description": "Optional default Slack channel label."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation timestamp written via FieldValue.serverTimestamp()."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Update timestamp written via FieldValue.serverTimestamp()."
+        }
+      },
+      "required": [
+        "userId",
+        "activePack",
+        "activeRole",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/orgs/{orgId}": {
+      "schema": { "$ref": "#/entities/Organization" },
+      "description": "User-created workspace organizations and BYO Slack app configurations."
+    },
+    "/incidents/{incidentId}": {
+      "schema": { "$ref": "#/entities/Incident" },
+      "description": "Real-time user-scoped operational incidents and alerts feed."
+    },
+    "/connectors/{connectorId}": {
+      "schema": { "$ref": "#/entities/Connector" },
+      "description": "User-scoped custom MCP Server URLs and imported OpenAPI tool connectors."
+    },
+    "/user_settings/{userId}": {
+      "schema": { "$ref": "#/entities/UserSettings" },
+      "description": "Per-user workspace link, onboarding flag, industry pack, role, and BYO Slack webhook configuration."
+    }
+  }
+}

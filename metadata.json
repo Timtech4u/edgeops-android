@@ -1,0 +1,6 @@
+{
+  "name": "EdgeOps",
+  "description": "Hybrid on-device and cloud AI incident triage with local privacy redaction and vendor-agnostic tool connectors.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
