@@ -1,0 +1,32 @@
+<resources>
+    <string name="app_name">CalmDuty</string>
+    <string name="badge_on_device_compact">On-Device · Private</string>
+    <string name="badge_cloud_investigation">Cloud Investigation</string>
+    <string name="badge_works_offline">Works Offline</string>
+    <string name="badge_offline_active">Works Offline</string>
+    <string name="badge_on_device">On-Device · Private</string>
+    <string name="tab_inbox">Inbox</string>
+    <string name="tab_connections">Connections</string>
+    <string name="filter_needs_action">Needs Action</string>
+    <string name="filter_all">All</string>
+    <string name="filter_hidden_noise">Hidden Noise</string>
+    <string name="action_sync_slack">Sync Slack</string>
+    <string name="action_sign_in_google">Sign in with Google</string>
+    <string name="action_sign_out">Sign out</string>
+    <string name="action_check_what_happened">Check what happened</string>
+    <string name="action_copy_reply">Copy Reply</string>
+    <string name="action_mark_resolved">Mark Resolved</string>
+    <string name="privacy_shield_title">Privacy Shield</string>
+    <string name="what_happened_title">What Happened</string>
+    <string name="connections_title">Connections</string>
+    <string name="onboarding_title">Connect Your Workspace</string>
+    <string name="cd_back">Navigate back</string>
+    <string name="cd_hero_illustration">CalmDuty local privacy shield and cloud illustration</string>
+    <string name="cd_empty_inbox">All clear inbox illustration</string>
+    <string name="cd_privacy_shield">Local privacy protection icon</string>
+    <string name="cd_cloud_investigation">Cloud investigation icon</string>
+    <string name="cd_offline_status">Offline capability status icon</string>
+    <string name="cd_copy">Copy to clipboard</string>
+    <string name="cd_expand_section">Toggle section details</string>
+    <string name="cd_sync_slack">Sync Slack messages</string>
+</resources>

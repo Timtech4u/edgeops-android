@@ -1,0 +1,395 @@
+rules_version = '2';
+
+// ===============================================================
+// Assumed Data Model (EdgeOps Android — Phase 0 Zero-Data-Retention)
+// ===============================================================
+//
+// Collection: /server_slack_connections/{orgId}
+//   Server-only KMS-wrapped Slack OAuth tokens (strictly denied to all clients).
+//
+// Collection: /orgs/{orgId}
+//   Owner-scoped workspace metadata (NO slackBotToken or slackSigningSecret allowed).
+//   Fields:
+//     - userId: string (required, immutable, == request.auth.uid)
+//     - orgName: string (required, 1..120)
+//     - operatorRole: string (required, enum: SUPPORT | FINANCE_LEAD | ADMIN)
+//     - webhookUrl: string (required, 1..500)
+//     - slackConnected: bool (required)
+//     - createdAt: timestamp (required, immutable, <= request.time)
+//     - updatedAt: timestamp (required, <= request.time)
+//   Subcollection: /orgs/{orgId}/alert_states/{alertHash}
+//     Zero-knowledge blind HMAC-SHA256 alert triage state sync (zero raw PII or text).
+//     Fields:
+//       - alertHash: string (required, immutable, <= 64, matches document ID)
+//       - orgId: string (required, immutable, matches parent orgId)
+//       - ownerId: string (required, immutable, creator UID)
+//       - status: string (required, enum: 'open' | 'snoozed' | 'resolved' | 'noise')
+//       - bucket: string (required, enum: 'needs_action' | 'hidden_noise')
+//       - updatedBy: string (required, == request.auth.uid)
+//       - updatedAt: timestamp (required, == request.time)
+//       - expireAt: timestamp (optional, TTL expiration timestamp)
+//       - snoozedUntil: timestamp | null (optional)
+//
+// Collection: /incidents/{incidentId}
+//   Owner-scoped redacted incident records (NO rawMessage field allowed).
+//
+// Collection: /connectors/{connectorId}
+//   Owner-scoped MCP / OpenAPI tool connectors.
+//
+// Collection: /user_settings/{userId}
+//   Owner-scoped user preferences & onboarding state.
+// ===============================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global safety net: default deny everything
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Shared Security Primitives ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function orgDocGrantsAccess(orgData) {
+      return ('userId' in orgData && orgData.userId == request.auth.uid) ||
+             ('ownerId' in orgData && orgData.ownerId == request.auth.uid) ||
+             ('ownerUid' in orgData && orgData.ownerUid == request.auth.uid) ||
+             ('memberIds' in orgData && orgData.memberIds is list && request.auth.uid in orgData.memberIds) ||
+             ('memberUids' in orgData && orgData.memberUids is list && request.auth.uid in orgData.memberUids);
+    }
+
+    function isOrgMemberOrOwner(orgId) {
+      return exists(/databases/$(database)/documents/orgs/$(orgId)) &&
+             orgDocGrantsAccess(get(/databases/$(database)/documents/orgs/$(orgId)).data);
+    }
+
+    function isValidPack(val) {
+      return val is string && val in ['LIVE_SLACK', 'ECOMMERCE', 'B2B_SAAS', 'LOGISTICS'];
+    }
+
+    function isValidRole(val) {
+      return val is string && val in ['SUPPORT', 'FINANCE_LEAD', 'ADMIN'];
+    }
+
+    function isValidSeverity(val) {
+      return val is string && val in ['HIGH', 'MEDIUM', 'LOW', 'NOISE'];
+    }
+
+    function isValidIncidentStatus(val) {
+      return val is string && val in ['NEEDS_ACTION', 'HIDDEN_NOISE', 'INVESTIGATED', 'RESOLVED'];
+    }
+
+    function isValidInferenceSource(val) {
+      return val is string && val in ['ON_DEVICE_NANO', 'CLOUD_FALLBACK', 'LOCAL_OFFLINE_GUARD', 'CLOUD_INVESTIGATION'];
+    }
+
+    function isValidStringList(val, maxSize) {
+      return val is list &&
+             val.size() <= maxSize &&
+             (val.size() == 0 || (val[0] is string && val[0].size() <= 120));
+    }
+
+    // --- Validation Blueprints (Called on BOTH create and update) ---
+    function isValidOrganization(data) {
+      return data.keys().hasAll([
+               'userId', 'orgName', 'operatorRole', 'webhookUrl',
+               'slackConnected', 'createdAt', 'updatedAt'
+             ]) &&
+             data.keys().hasOnly([
+               'userId', 'orgName', 'operatorRole', 'webhookUrl',
+               'slackConnected', 'createdAt', 'updatedAt'
+             ]) &&
+             data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.userId == request.auth.uid &&
+             data.orgName is string && data.orgName.size() >= 1 && data.orgName.size() <= 120 &&
+             isValidRole(data.operatorRole) &&
+             data.webhookUrl is string && data.webhookUrl.size() >= 1 && data.webhookUrl.size() <= 500 &&
+             data.slackConnected is bool &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    // Zero-Knowledge Blind HMAC-SHA256 Alert State Sync (Zero raw PII, text, title, body, or rawMessage)
+    function isValidAlertState(data, orgId, alertHash) {
+      return data.keys().hasAll([
+               'alertHash', 'orgId', 'ownerId', 'status', 'bucket', 'updatedBy', 'updatedAt'
+             ]) &&
+             data.keys().hasOnly([
+               'alertHash', 'orgId', 'ownerId', 'status', 'bucket', 'updatedBy', 'updatedAt',
+               'expireAt', 'snoozedUntil'
+             ]) &&
+             isValidId(data.alertHash) && data.alertHash.size() <= 64 && data.alertHash == alertHash &&
+             isValidId(data.orgId) && data.orgId == orgId &&
+             isValidId(data.ownerId) &&
+             data.status is string && data.status in ['open', 'snoozed', 'resolved', 'noise'] &&
+             data.bucket is string && data.bucket in ['needs_action', 'hidden_noise'] &&
+             isValidId(data.updatedBy) && data.updatedBy == request.auth.uid &&
+             data.updatedAt is timestamp && data.updatedAt == request.time &&
+             (!('expireAt' in data) || data.expireAt is timestamp) &&
+             (!('snoozedUntil' in data) || data.snoozedUntil == null || data.snoozedUntil is timestamp);
+    }
+
+    function isValidIncident(data) {
+      return data.keys().hasAll([
+               'userId', 'title', 'channel', 'industryPack', 'severity',
+               'status', 'noiseSuppressed', 'scrubbedMessage',
+               'redactionCount', 'triageSummary', 'suggestedReply',
+               'inferenceSource', 'createdAt', 'updatedAt'
+             ]) &&
+             data.keys().hasOnly([
+               'userId', 'title', 'channel', 'industryPack', 'severity',
+               'status', 'noiseSuppressed', 'scrubbedMessage',
+               'redactionCount', 'triageSummary', 'suggestedReply',
+               'inferenceSource', 'diagnosis', 'toolsUsed',
+               'totalToolsAvailable', 'investigatedRole', 'approvedReply',
+               'approvedByRole', 'slackPosted', 'createdAt', 'updatedAt'
+             ]) &&
+             data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.userId == request.auth.uid &&
+             data.title is string && data.title.size() >= 1 && data.title.size() <= 200 &&
+             data.channel is string && data.channel.size() >= 1 && data.channel.size() <= 60 &&
+             isValidPack(data.industryPack) &&
+             isValidSeverity(data.severity) &&
+             isValidIncidentStatus(data.status) &&
+             data.noiseSuppressed is bool &&
+             data.scrubbedMessage is string && data.scrubbedMessage.size() >= 1 && data.scrubbedMessage.size() <= 2000 &&
+             data.redactionCount is int && data.redactionCount >= 0 && data.redactionCount <= 50 &&
+             data.triageSummary is string && data.triageSummary.size() <= 1000 &&
+             data.suggestedReply is string && data.suggestedReply.size() <= 2000 &&
+             isValidInferenceSource(data.inferenceSource) &&
+             (!('diagnosis' in data) || (data.diagnosis is string && data.diagnosis.size() <= 3000)) &&
+             (!('toolsUsed' in data) || isValidStringList(data.toolsUsed, 10)) &&
+             (!('totalToolsAvailable' in data) || (data.totalToolsAvailable is int && data.totalToolsAvailable >= 0 && data.totalToolsAvailable <= 500)) &&
+             (!('investigatedRole' in data) || isValidRole(data.investigatedRole)) &&
+             (!('approvedReply' in data) || (data.approvedReply is string && data.approvedReply.size() <= 2000)) &&
+             (!('approvedByRole' in data) || isValidRole(data.approvedByRole)) &&
+             (!('slackPosted' in data) || data.slackPosted is bool) &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidConnector(data) {
+      return data.keys().hasAll([
+               'userId', 'name', 'connectorType', 'endpointUrl',
+               'toolNames', 'toolCount', 'enabled', 'statusLabel',
+               'createdAt', 'updatedAt'
+             ]) &&
+             data.keys().hasOnly([
+               'userId', 'name', 'connectorType', 'endpointUrl',
+               'toolNames', 'toolCount', 'enabled', 'statusLabel',
+               'createdAt', 'updatedAt'
+             ]) &&
+             data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.userId == request.auth.uid &&
+             data.name is string && data.name.size() >= 1 && data.name.size() <= 120 &&
+             data.connectorType is string && data.connectorType in ['MCP_SERVER', 'OPENAPI_SPEC'] &&
+             data.endpointUrl is string && data.endpointUrl.size() >= 1 && data.endpointUrl.size() <= 500 &&
+             isValidStringList(data.toolNames, 50) &&
+             data.toolCount is int && data.toolCount >= 0 && data.toolCount <= 200 &&
+             data.enabled is bool &&
+             data.statusLabel is string && data.statusLabel.size() >= 1 && data.statusLabel.size() <= 80 &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidUserSettings(data, targetUserId) {
+      return data.keys().hasAll(['userId', 'activePack', 'activeRole', 'createdAt', 'updatedAt']) &&
+             data.keys().hasOnly([
+               'userId', 'orgId', 'orgName', 'onboardingCompleted',
+               'activePack', 'activeRole', 'slackWebhookUrl',
+               'slackChannel', 'createdAt', 'updatedAt'
+             ]) &&
+             data.userId is string && data.userId == request.auth.uid && data.userId == targetUserId &&
+             isValidPack(data.activePack) &&
+             isValidRole(data.activeRole) &&
+             (!('orgId' in data) || (data.orgId is string && data.orgId.size() <= 128)) &&
+             (!('orgName' in data) || (data.orgName is string && data.orgName.size() <= 120)) &&
+             (!('onboardingCompleted' in data) || data.onboardingCompleted is bool) &&
+             (!('slackWebhookUrl' in data) || (data.slackWebhookUrl is string && data.slackWebhookUrl.size() <= 500)) &&
+             (!('slackChannel' in data) || (data.slackChannel is string && data.slackChannel.size() <= 80)) &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    // Server-only Slack OAuth connections (strictly inaccessible to mobile/browser client SDKs)
+    match /server_slack_connections/{orgId} {
+      allow read, write: if false;
+    }
+
+    // --- Collection: /orgs/{orgId} ---
+    match /orgs/{orgId} {
+      allow get: if isSignedIn() && isValidId(orgId) && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+
+      allow create: if isSignedIn() &&
+                       isValidId(orgId) &&
+                       isValidOrganization(incoming());
+
+      allow update: if isSignedIn() &&
+                       isValidId(orgId) &&
+                       isValidOrganization(incoming()) &&
+                       existing().userId == request.auth.uid &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt &&
+                       (
+                         // Action 1: Update Slack connection status (secrets are server-only)
+                         incoming().diff(existing()).affectedKeys().hasOnly([
+                           'slackConnected', 'updatedAt'
+                         ]) ||
+                         // Action 2: Update workspace name or default operator role
+                         incoming().diff(existing()).affectedKeys().hasOnly([
+                           'orgName', 'operatorRole', 'updatedAt'
+                         ])
+                       );
+
+      allow delete: if isSignedIn() && isValidId(orgId) && existing().userId == request.auth.uid;
+
+      // Zero-Knowledge Blind HMAC-SHA256 Alert State Sync (Zero raw PII or text bodies)
+      match /alert_states/{alertHash} {
+        allow get: if isSignedIn() &&
+                      isValidId(orgId) &&
+                      isValidId(alertHash) && alertHash.size() <= 64 &&
+                      isOrgMemberOrOwner(orgId);
+        allow list: if isSignedIn() &&
+                       isValidId(orgId) &&
+                       isOrgMemberOrOwner(orgId);
+        allow create: if isSignedIn() &&
+                         isValidId(orgId) &&
+                         isValidId(alertHash) && alertHash.size() <= 64 &&
+                         isOrgMemberOrOwner(orgId) &&
+                         isValidAlertState(incoming(), orgId, alertHash) &&
+                         incoming().ownerId == request.auth.uid;
+        allow update: if isSignedIn() &&
+                         isValidId(orgId) &&
+                         isValidId(alertHash) && alertHash.size() <= 64 &&
+                         isOrgMemberOrOwner(orgId) &&
+                         isValidAlertState(incoming(), orgId, alertHash) &&
+                         incoming().alertHash == existing().alertHash &&
+                         incoming().orgId == existing().orgId &&
+                         incoming().ownerId == existing().ownerId &&
+                         incoming().diff(existing()).affectedKeys().hasOnly([
+                           'status', 'bucket', 'updatedBy', 'updatedAt', 'expireAt', 'snoozedUntil'
+                         ]);
+        allow delete: if isSignedIn() &&
+                         isValidId(orgId) &&
+                         isValidId(alertHash) && alertHash.size() <= 64 &&
+                         isOrgMemberOrOwner(orgId);
+      }
+    }
+
+    // --- Collection: /incidents/{incidentId} ---
+    match /incidents/{incidentId} {
+      allow get: if isSignedIn() && isValidId(incidentId) && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+
+      allow create: if isSignedIn() &&
+                       isValidId(incidentId) &&
+                       isValidIncident(incoming());
+
+      allow update: if isSignedIn() &&
+                       isValidId(incidentId) &&
+                       isValidIncident(incoming()) &&
+                       existing().userId == request.auth.uid &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt &&
+                       existing().status != 'RESOLVED' &&
+                       (
+                         // Action 1: Local On-Device Triage & Privacy Shield update
+                         incoming().diff(existing()).affectedKeys().hasOnly([
+                           'scrubbedMessage', 'redactionCount', 'triageSummary',
+                           'suggestedReply', 'inferenceSource', 'noiseSuppressed',
+                           'severity', 'status', 'updatedAt'
+                         ]) ||
+                         // Action 2: Cloud Investigation & Dynamic Tool Retrieval update
+                         incoming().diff(existing()).affectedKeys().hasOnly([
+                           'diagnosis', 'toolsUsed', 'totalToolsAvailable',
+                           'investigatedRole', 'suggestedReply', 'inferenceSource',
+                           'status', 'updatedAt'
+                         ]) ||
+                         // Action 3: Approve & Reply in Slack (Terminal Transition)
+                         (
+                           incoming().status == 'RESOLVED' &&
+                           incoming().diff(existing()).affectedKeys().hasOnly([
+                             'status', 'approvedReply', 'approvedByRole',
+                             'slackPosted', 'updatedAt'
+                           ])
+                         ) ||
+                         // Action 4: Manual Noise Suppression Toggle
+                         incoming().diff(existing()).affectedKeys().hasOnly([
+                           'status', 'noiseSuppressed', 'updatedAt'
+                         ])
+                       );
+
+      allow delete: if isSignedIn() && isValidId(incidentId) && existing().userId == request.auth.uid;
+    }
+
+    // --- Collection: /connectors/{connectorId} ---
+    match /connectors/{connectorId} {
+      allow get: if isSignedIn() && isValidId(connectorId) && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+
+      allow create: if isSignedIn() &&
+                       isValidId(connectorId) &&
+                       isValidConnector(incoming());
+
+      allow update: if isSignedIn() &&
+                       isValidId(connectorId) &&
+                       isValidConnector(incoming()) &&
+                       existing().userId == request.auth.uid &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt &&
+                       (
+                         // Action 1: Toggle connector active state
+                         incoming().diff(existing()).affectedKeys().hasOnly(['enabled', 'statusLabel', 'updatedAt']) ||
+                         // Action 2: Update endpoint or discovered tools
+                         incoming().diff(existing()).affectedKeys().hasOnly(['name', 'endpointUrl', 'toolNames', 'toolCount', 'statusLabel', 'updatedAt'])
+                       );
+
+      allow delete: if isSignedIn() && isValidId(connectorId) && existing().userId == request.auth.uid;
+    }
+
+    // --- Collection: /user_settings/{userId} ---
+    match /user_settings/{userId} {
+      allow get: if isSignedIn() && isValidId(userId) && request.auth.uid == userId;
+
+      allow create: if isSignedIn() &&
+                       isValidId(userId) &&
+                       request.auth.uid == userId &&
+                       isValidUserSettings(incoming(), userId);
+
+      allow update: if isSignedIn() &&
+                       isValidId(userId) &&
+                       request.auth.uid == userId &&
+                       isValidUserSettings(incoming(), userId) &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt &&
+                       (
+                         // Action 1: Switch industry pack or role
+                         incoming().diff(existing()).affectedKeys().hasOnly(['activePack', 'activeRole', 'updatedAt']) ||
+                         // Action 2: Update BYO Slack webhook settings
+                         incoming().diff(existing()).affectedKeys().hasOnly(['slackWebhookUrl', 'slackChannel', 'updatedAt']) ||
+                         // Action 3: Complete onboarding & link workspace org
+                         incoming().diff(existing()).affectedKeys().hasOnly([
+                           'orgId', 'orgName', 'activeRole', 'onboardingCompleted', 'updatedAt'
+                         ])
+                       );
+
+      allow delete: if isSignedIn() && isValidId(userId) && request.auth.uid == userId;
+    }
+  }
+}
